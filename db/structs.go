@@ -20,3 +20,12 @@ type SingleBookInList struct {
 	Author string
 	Number int
 }
+
+// RandomNote represents a randomly selected note with its book information
+type RandomNote struct {
+	BookId      string
+	BookTitle   string
+	BookAuthor  string
+	Highlight   string
+	Note        string
+}

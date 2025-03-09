@@ -6,6 +6,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/urfave/cli/v2"
 	dbThings "ibooks_notes_exporter/db"
+	"ibooks_notes_exporter/email"
 	"log"
 	"os"
 	"strings"
@@ -49,14 +50,87 @@ func main() {
 						Required: false,
 					},
 				},
+				},
+				{
+					Name:      "mail",
+					Usage:     "Send a random note to the configured email address",
+					Action:    mailRandomNote,
+					ArgsUsage: "ibooks_notes_exporter mail",
+					Flags: []cli.Flag{
+						&cli.StringFlag{
+							Name:    "to",
+							Usage:   "Email address to send to (overrides environment variable)",
+							Aliases: []string{"t"},
+						},
+						&cli.StringFlag{
+							Name:    "from",
+							Usage:   "Email address to send from (overrides environment variable)",
+							Aliases: []string{"f"},
+						},
+						&cli.StringFlag{
+							Name:    "api-key",
+							Usage:   "Sendgrid API key (overrides environment variable)",
+							Aliases: []string{"k"},
+						},
+					},
+				},
 			},
-		},
-	}
+		}
 
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
 
+}
+
+// mailRandomNote is the handler for the mail command
+func mailRandomNote(cCtx *cli.Context) error {
+	// Get DB connection
+	db := dbThings.GetDBConnection()
+	defer db.Close()
+
+	// Get a random note
+	randomNote, err := dbThings.FetchRandomNote(db)
+	if err != nil {
+		return fmt.Errorf("failed to get a random note: %v", err)
+	}
+
+	// Display the note that will be sent
+	fmt.Println("Selected random note:")
+	fmt.Printf("Book: %s — %s\n", randomNote.BookTitle, randomNote.BookAuthor)
+	fmt.Printf("> %s\n", strings.Replace(randomNote.Highlight, "\n", "", -1))
+	if randomNote.Note != "" {
+		fmt.Printf("\n%s\n", strings.Replace(randomNote.Note, "\n", "", -1))
+	}
+	
+	// Get email config from environment variables
+	config := email.GetConfigFromEnv()
+	
+	// Override with command line args if provided
+	if cCtx.String("to") != "" {
+		config.ToEmail = cCtx.String("to")
+	}
+	if cCtx.String("from") != "" {
+		config.FromEmail = cCtx.String("from")
+	}
+	if cCtx.String("api-key") != "" {
+		config.APIKey = cCtx.String("api-key")
+	}
+	
+	// Check if recipient email is set
+	if config.ToEmail == "" {
+		return fmt.Errorf("recipient email is required. Set EMAIL_TO_ADDRESS environment variable or use --to flag")
+	}
+	
+	// Send the email
+	fmt.Printf("\nSending email to %s...\n", config.ToEmail)
+	err = email.SendRandomNote(config, *randomNote)
+	if err != nil {
+		return fmt.Errorf("failed to send email: %v", err)
+	}
+	
+	fmt.Println("Email sent successfully!")
+	return nil
 }
 
 func GetLastName(name string) string {

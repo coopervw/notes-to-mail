@@ -5,14 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 func GetDBConnection() *sql.DB {
 	homedir, err := os.UserHomeDir()
-	if err != nil {
+	if (err != nil) {
 		log.Fatal(err)
 	}
 
@@ -63,4 +65,87 @@ func findByExt(path string) string {
 	})
 
 	return fname
+}
+
+// FetchRandomNote gets a random note from all the books in the database
+func FetchRandomNote(db *sql.DB) (*RandomNote, error) {
+	// Step 1: Get all books and their note counts
+	bookCountsRows, err := db.Query(GetBooksWithNoteCount)
+	if err != nil {
+		return nil, err
+	}
+	defer bookCountsRows.Close()
+
+	// Step 2: Create a weighted list of book IDs
+	type bookWeight struct {
+		id         string
+		noteCount  int
+	}
+	var books []bookWeight
+	var totalNotes int
+
+	for bookCountsRows.Next() {
+		var bookID string
+		var noteCount int
+		err := bookCountsRows.Scan(&bookID, &noteCount)
+		if err != nil {
+			return nil, err
+		}
+		books = append(books, bookWeight{id: bookID, noteCount: noteCount})
+		totalNotes += noteCount
+	}
+
+	if err = bookCountsRows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(books) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	// Step 3: Select a random book, weighted by note count
+	rand.Seed(time.Now().UnixNano())
+	randomValue := rand.Intn(totalNotes) + 1
+	var selectedBookID string
+
+	runningTotal := 0
+	for _, book := range books {
+		runningTotal += book.noteCount
+		if randomValue <= runningTotal {
+			selectedBookID = book.id
+			break
+		}
+	}
+
+	// Step 4: Get book information
+	var bookTitle, bookAuthor string
+	row := db.QueryRow(GetBookDataById, selectedBookID)
+	err = row.Scan(&bookTitle, &bookAuthor)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 5: Get a random note from the selected book
+	noteRow := db.QueryRow(GetRandomNoteFromBook, selectedBookID)
+	
+	var highlight string
+	var note sql.NullString
+	err = noteRow.Scan(&highlight, &note)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 6: Create the RandomNote object
+	randomNote := &RandomNote{
+		BookId:     selectedBookID,
+		BookTitle:  bookTitle,
+		BookAuthor: bookAuthor,
+		Highlight:  highlight,
+	}
+	
+	if note.Valid {
+		randomNote.Note = note.String
+	}
+
+	return randomNote, nil
 }
